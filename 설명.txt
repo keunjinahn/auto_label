@@ -1,0 +1,38 @@
+1) RStudio 다운로드
+- https://www.rstudio.com/products/rstudio/download/#download
+  RStudio-1.4.1717.exe (for windows 10)
+  
+- 센서 데이터 zip 다운받아서 프로젝트 폴더의 data 폴더에 압축을 푼다.
+  파일 링크 : https://drive.google.com/file/d/1wEktiYTye_wFl-RKiRCbl4k3MdLiQomr/view?usp=sharing
+
+
+2) RStudio 소스 열기
+ - 참조소스 링크 : http://mkalikatzarakis.eu/wp-content/uploads/2018/12/IMS_dset.html
+ - RStudio 프로그램화면->File->New File->R Notebook
+   -> R Notebook 관련 라이브러리가 자동으로 설치됨
+ - RStudio Notebook 편집기에서 소스 디렉토리에 있는 rstudio.txt 파일의 내용을 복사하여 붙여넣음
+ 
+3) RStudio 실행
+  - 프로젝트폴더는 개인 폴더와 맞추어서 변경해야함.
+    src_data_dir <- "D:\\project\\auto_label\\data\\1st_test"
+    src_data_dir_2 <- "D:\\project\\auto_label\\data\\1st_test\\"
+    dest_data_dir <- "D:\\project\\auto_label\\data\\processed_data_src.csv"
+
+  - 편집기 오른쪽 Run 버튼에서 Run All 또는 Run Selected Line 메뉴를 통해 블럭단위로 실행함.
+  - 참조소스 링크페이지에서 블록단위로 실행함.
+  - 맨마지막 extract_features(src_data_dir, dest_data_dir) 은 시간이 많이 걸림
+  - 최종적으로 프로젝트 폴더의 data 폴더안에   processed_data_src.csv 파일이 생성됨
+4) processed_data_src.csv 파일을 라벨 파일로 컨버팅
+  - 맨오른쪽 컬럼의 내용을 0,1로 변환하여 processed_data_labled.csv 파일생성
+  
+5) Jupyter Notebook 실행
+   - snorkel_dtree_20201126.ipynb : 8개의 라벨 함수를 만들어서 최종 라벨링된 파일을 생성됨
+   - test_snorkel_100.ipynb : 스노쿨로 만든 라벨 데이터 100개를 테스트함
+   - test_snorkel_200.ipynb : 스노쿨로 만든 라벨 데이터 200개를 테스트함
+   - test_snorkel_400.ipynb : 스노쿨로 만든 라벨 데이터 400개를 테스트함
+   - test_기준_100.ipynb : 기존 라벨데이터 100개를 테스트함
+   - test_기준_200.ipynb : 기존 라벨데이터 200개를 테스트함
+   - test_기준_400.ipynb : 기존 라벨데이터 400개를 테스트함
+   
+  
+  

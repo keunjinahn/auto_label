@@ -1,0 +1,380 @@
+library(e1071)
+library(ggplot2)
+library(dplyr)
+
+library(caret)
+library(GGally)
+
+src_data_dir <- "D:\\project\\auto_label\\data\\1st_test"
+src_data_dir_2 <- "D:\\project\\auto_label\\data\\1st_test\\"
+dest_data_dir <- "D:\\project\\auto_label\\data\\processed_data_src.csv"
+files <- list.files(src_data_dir)
+head(files)
+
+
+file <- read.table(paste(src_data_dir_2, files[1], sep=""), 
+                   col.names = paste("b", rep(1:4, each = 2), c("x", "y"), sep = ""),
+                   sep = "\t")
+head(file)
+
+
+file %>%
+  mutate(observation = as.numeric(rownames(.))) %>%
+  reshape2::melt(id.vars = "observation") %>%
+  ggplot(aes(x = observation, y = value)) + 
+  geom_line() + 
+  facet_wrap(variable~., ncol = 4) + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  
+  
+  
+read_file <- function(filename) 
+{
+  raw_vib <- read.table(paste(src_data_dir_2, filename, sep=""), 
+                   col.names = paste("b", rep(1:4, each = 2), c("x", "y"), sep = ""),
+                   sep = "\t")
+  return(raw_vib)
+}
+
+# RMS value
+rms <- function(x){sqrt(mean(x^2))} 
+
+# max absolute value
+max_abs <- function(x){max(abs(x))} 
+
+# Peak-to-peak value
+p2p <- function(x){abs(max(x)) + abs(min(x))} 
+
+# Shannon entropy (cut signal to 500 bins)
+entropy <- function(x){entropy::entropy(table(cut(x, 500)))} 
+
+# Autoregressive coefficients
+ar_coeffs <- function(raw_signal, ar_order) 
+{
+  # Get the AR coeffs for each of the 8 signals and return them in a vector
+  ar_coeffs <- apply(raw_signal, 2, function(x){ar(x, aic = F, order.max = ar_order)$ar}) %>%
+  as.vector(.)
+
+  # Generate a vector of names, to append them to rest of the features later on
+  ar_coeffs_names <- paste("b", rep(1:4, each = 2), c("x", "y"),".ar", rep(1:ar_order, each = ar_order), sep = "") %>%
+    matrix(., ncol = ar_order)
+  ar_coeffs_names <- (as.vector(t(ar_coeffs_names)))
+  
+  # Return a 1 by n dataframe as the result
+  out <- t(data.frame(ar_coeffs, row.names = ar_coeffs_names))
+
+return(out)
+}  
+
+time_features <- function(raw_vib_file)
+{
+  # Extract statistical moments and rms, abs and peak-to-peak values
+  time_feats <- raw_vib_file %>% summarise_all(funs(mean,
+                                                    sd,
+                                                    skewness,
+                                                    kurtosis,
+                                                    entropy,
+                                                    rms,
+                                                    max_abs,
+                                                    p2p)) 
+  
+  
+  # Calculate quantiles
+  quants <- apply(raw_vib_file, 2, quantile)[2:4, ] # Drop the 0% and 100% quantiles
+  col.names <- paste(rep(colnames(quants), each = 3), rep(rownames(quants, 8)), sep = ".")
+  quants <-quants %>% as.vector %>% data.frame %>% t
+  colnames(quants) <- col.names
+  
+  # Extract AR model coeffs and bind all the features of the vibration signal together
+  time_feats <- cbind(time_feats, quants, ar_coeffs(raw_vib_file, ar_order = 8))
+  
+  # Remove rownames (appear due to the preprocessing done in the AR coeff function)
+  rownames(time_feats) <- NULL
+  
+  # Return a 1 x n dataframe containing the extracted features per file
+  return(time_feats)
+}
+
+
+apply_FFT <- function(x, sampling_rate = 20000)
+{
+  # Center the signal first
+  x <- x - mean(x)
+  # Get the amplitudes
+  amp <- fft(x)[1:(length(x) / 2)]%>% # Drop the second half - it's juast a mirror of the first half 
+    Mod # Calculate the amplitude of the complex output of the previous line
+  
+  # Make a vector containing the frequencies
+  freq <- seq(0, sampling_rate / 2, length.out = length(x) / 2)
+  
+  # and make a dataframe out of them (remove the dc term)
+  fft_out <- data.frame("amp" = amp[-1] / length(amp), "freq" = freq[-1])
+
+  return(fft_out)
+}
+
+read_file(files[2000])$b2y %>%
+  apply_FFT(.) %>%
+  ggplot(aes(x = freq, y = log(amp))) + 
+  geom_line() + 
+  ggtitle("Spectral density with our FFT function: test on a vibration signal")
+  
+  
+raw_vib <- read_file(files[2000])$b2y
+
+raw_vib <- raw_vib - mean(raw_vib)
+
+spec <- spec.ar(x = raw_vib, 
+                n.freq = 1000, # Generate 1000 points
+                order = 100, # Use an AR(100) model - might be an overkill
+                plot = F) # Do not plot
+spec <- data.frame("freq" = seq(0, 20000 / 2, length.out = length(spec$spec)),
+                   "amp" = log(spec$spec))
+
+ggplot(spec, aes(x = freq, y = amp)) + 
+  geom_line() + 
+  ggtitle("Spectral density using an AR(100) model: test on a vibration signal")  
+  
+  
+N <- 16 # No of rolling elements
+n <- 2000 / 60 # Rotational speed [Hz]
+Bd <- 0.331 # Rolling element diameter [in]
+Pd <- 2.815 # Pitch diameter [in]
+phi <- 15.17 * pi / 180 # Contact diameter [rad]
+
+# Get the frequencies
+bearing_freqs <- list("BPFI" = N / 2 * (1 + Bd / Pd * cos(phi)) * n,
+                   "BPFO" = N / 2 * (1 - Bd / Pd * cos(phi)) * n,
+                   "BSF" = Pd / (2 * Bd) * (1 - (Bd / Pd * cos(phi)) ^2) * n,
+                   "FTF" = 0.5 * (1 - Bd / Pd * cos(phi)) * n)
+
+bearing_freqs
+
+
+get_spectrum <- function(signal, spectrum.points = 10000, AR.order = 100, sampling_rate = 20000)
+{
+  # Get spectral density
+  spectrum <- spec.ar(x = signal - mean(signal), # Center the signal 
+                  n.freq = spectrum.points, # Generate 1000 points
+                  order = AR.order, 
+                  plot = F) # Do not plot
+  
+  # Convert to a dataframe
+  spectrum <- data.frame("freq" = seq(0, sampling_rate / 2, length.out = spectrum.points), 
+                         "amp" = log(spectrum$spec))
+
+  return(spectrum)
+}
+
+# Function to do linear interpolation on the spectral density at a given frequency
+interpolate_spectrum <- function(spectrum, f0)
+{
+  p1 <- spectrum[max(which(spectrum$freq <= f0)), ]
+  p2 <- spectrum[min(which(spectrum$freq >= f0)), ]
+  out <- (p2$amp - p1$amp) / (p2$freq - p1$freq) * (f0 - p1$freq) + p1$amp
+  return(out)
+}
+
+# Function to return spectraldensity values at the 
+get_spectra_at_char_freqs <- function(spectrum, bearing_frequencies)
+{
+  # Find the log-amplitude of the spectral density at the characteristic bearing frequencies
+  spec_val_char_freqs <- sapply(bearing_frequencies, interpolate_spectrum, spectrum = spectrum) %>% 
+    as.data.frame %>% 
+    t
+  
+  # Unname rows (result of the preprocessing done in the previously called function)
+  rownames(spec_val_char_freqs) <- NULL
+  return(spec_val_char_freqs)
+}
+
+
+top_content_freqs <- function(spectrum, no_freqs)
+{
+  # Find the indices at which peaks occur
+  peak_idx <- quantmod::findPeaks(spectrum$amp)
+  
+  # Isolate these instances, and get the top <no_freqs>
+  peak_freqs <- spectrum[peak_idx, ] %>%
+    arrange(desc(amp)) %>% 
+    head(., no_freqs) %>%
+    select(freq) %>%
+    t
+  
+  return(peak_freqs)
+}
+
+# Function to calculate integral based on the trapezoidal rule
+trapz <- function(x, y)
+{
+  # Re-center y values to zero min
+  y <- y + abs(min(y))
+  
+  # Calculate the area using the trapezoidal method by taking the average of the "left" and "right" y-values.
+  area <- sum(diff(x) * (head(y, -1) + tail(y, -1))) / 2 
+  
+  return(area)
+}
+
+# Function to calculate hte statistical moments of the spectrum
+get_spectral_moments <- function(spectrum)
+{
+  f <- spectrum$freq
+  s <- spectrum$amp + abs(min(spectrum$amp)) # Center to zero min
+  
+  fc <- trapz(x = f, y = s * f) / trapz(x = f, y = s) # Defined outside the list, as it will be used
+                                                      # within the list (vf) while the latter is being created
+  feats <-list("fc" = fc, # frequency center
+               "rmsf" = sqrt(trapz(x = f, y = s * f * f) / trapz(x = f, y = s)), # Root mean square frequency
+               "vf" = sqrt(trapz(x = f, y = (f - fc) ^ 2  * s) / trapz(x = f, y = s)), # Root variance frequency
+               "sp_mean" = mean(spectrum$amp),
+               "sp_sd" = sd(spectrum$amp),
+               "sp_skew" = skewness(spectrum$amp),
+               "sp_kurtosis" = kurtosis(spectrum$amp),
+               "sp_entropy" = entropy(spectrum$amp),
+               "power" = sum(exp(spectrum$amp))) # Power of the signal (sum of the FFT spectrum components)
+  
+  return(feats)
+}
+
+
+# Function to split the spectrum into three different areas
+split_spectrum <- function(spectrum)
+{
+  # Area below rotational speed of the shaft
+  sub_spectrum <- spectrum %>%
+  filter(freq < 2000 / 60) # Rotational speed of the shaft = 2000 rpm
+
+  # Area between rotational speed of the shaft, up to ten times of it
+  mid_spectrum <- spectrum %>%
+    filter(freq >= 2000 / 60) %>%
+    filter(freq < 10 * 2000 / 60)
+  
+  # Area above ten times the rotational speed of the shaft
+  high_spectrum <- spectrum %>%
+    filter(freq >= 10 * 2000 / 60)
+  
+  out <- list("low_spectr" = sub_spectrum,
+              "mid_spectr" = mid_spectrum,
+              "hi_spectr" = high_spectrum)
+  
+  return(out)
+}
+
+
+frequency_features <- function(raw_vib_file, bearing_frequencies)
+{
+  # Get the spectra
+  spectra <- apply(raw_vib_file, 2, get_spectrum)
+  
+  # Calculate spectral densities at the characteristic bearing frequencies
+  bear_f_spectra <- sapply(spectra, get_spectra_at_char_freqs, bearing_frequencies) %>% 
+    as.vector %>% 
+    t %>% 
+    data.frame
+  
+  colnames(bear_f_spectra) <- paste(rep(colnames(raw_vib_file), each = 4), 
+                                    rep(c("BPFI", "BPFO", "BSF", "FTF"), 4), sep = ".")
+  
+  
+  no_freqs <- 15 # Return top n freqs
+  top_freqs <- sapply(spectra, top_content_freqs, no_freqs = no_freqs) %>% 
+    as.vector %>% 
+    t %>% 
+    data.frame
+  
+  colnames(top_freqs) <- paste(rep(colnames(raw_vib_file), each = no_freqs), 
+                               "freq", rep(1:no_freqs, 4), sep = ".")
+  
+  # Split the spectra into three frequecy areas
+  spectra <- lapply(spectra, split_spectrum)
+  
+  # Convert the list of lists to list
+  spectra <- unlist(spectra, recursive = F)
+  
+  # For the entire spectrum
+  moments <- sapply(spectra, get_spectral_moments) 
+  col.names <- paste(rep(colnames(moments), each = 9), rep(rownames(moments), 4), sep = ".")
+  moments <- moments %>% 
+    do.call(cbind, .) %>% 
+    as.vector %>% t %>% 
+    data.frame
+  colnames(moments) <- col.names
+  
+  # Combine all
+  freq_feats <- cbind(bear_f_spectra, top_freqs, moments)
+  
+  # Remove rownames (appear due to the preprocessing done in the AR coeff function)
+  rownames(freq_feats) <- NULL
+  
+  # Return a 1 x n dataframe containing the extracted features per file
+  return(freq_feats)
+}
+
+
+calculate_features <- function(filename, bearing_frequencies)
+{
+  # Read the vibrations file
+  vib_file <- read_file(filename)
+  
+  # Calculate the features
+  feats <- cbind(time_features(vib_file), 
+                 frequency_features(vib_file, bearing_frequencies))
+  
+  # Return them (1 by n list)
+  return(feats)
+}
+
+labels <- list("b1.state" = c(rep("early", each = 151), 
+                              rep("suspect", each = 449), 
+                              rep("normal", each = 899), 
+                              rep("suspect", each = 599), 
+                              rep("imminent_failure", each = 58)),
+               "b2.state" = c(rep("early", 500),
+                              rep("normal", 1500), 
+                              rep("suspect", 120), 
+                              rep("imminent_failure", 36)),
+               "b3.state" = c(rep("early", 500),
+                              rep("normal", 1290), 
+                              rep("suspect", 330), 
+                              rep("inner_race_failure", 36)),
+               "b4.state" = c(rep("early", 200),
+                              rep("normal", 800), 
+                              rep("suspect", 435),
+                              rep("inner_race_failure", 405),
+                              rep("stage_2_failure", 316))) %>%
+  data.frame
+  
+  
+# Perform post processing on the column names
+postprocess_dset <- function(data, bearing)
+{
+  # Split into individual bearing datasets
+  bearing_dset <- data[, grepl(bearing, colnames(data))]
+  colnames(bearing_dset) <- gsub(bearing, "", colnames(bearing_dset))
+  colnames(bearing_dset) <- gsub(".state", "state", colnames(bearing_dset)) # leftovers not captured from the previous line
+
+  return(bearing_dset)
+}  
+
+
+# Function to read the vibration files, extract features, post-process the dataset, and write to an output file
+extract_features <- function(input_dir, output_file)
+{
+  # Extract the features
+  features <- lapply(list.files(input_dir), calculate_features, bearing_freqs) %>% 
+    do.call("rbind", .) 
+  
+  # Bind them with the labels
+  dset <- cbind(features, labels)
+  
+  # Postprocess and write to .csv
+  dset <- lapply(paste("b", rep(1:4, 1), sep = ""), postprocess_dset, data = dset) %>%  
+    do.call(rbind, .)
+    
+  
+  return(write.csv(dset, file = output_file))
+}
+
+
+extract_features(src_data_dir, dest_data_dir)
